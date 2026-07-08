@@ -1,5 +1,7 @@
 # Caddy + AliDNS 配置示例
 
+安装与运维：[docs/使用说明.md](./docs/使用说明.md)（编译发布见 [docs/编译与发布说明.md](./docs/编译与发布说明.md)）。
+
 ## 全局 ACME DNS（推荐）
 
 ```caddyfile

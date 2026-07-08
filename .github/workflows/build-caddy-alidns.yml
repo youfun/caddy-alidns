@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       caddy_version:
-        description: "Caddy version (e.g. v2.10.0 or latest)"
+        description: "Caddy version (e.g. v2.10.0; avoid latest — may require Go 1.25+)"
         required: false
-        default: "latest"
+        default: "v2.10.0"
         type: string
       create_release:
         description: "Create a GitHub release for this build"
@@ -25,7 +25,7 @@ on:
     - cron: "0 2 * * 0"
 
 env:
-  GOTOOLCHAIN: local
+  GOTOOLCHAIN: auto
 
 permissions:
   contents: write
@@ -34,6 +34,7 @@ jobs:
   build:
     name: Build caddy-alidns
     strategy:
+      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -70,15 +71,19 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "~1.24"
+          go-version: "1.24.x"
           check-latest: true
+          cache: false
 
       - name: Install xcaddy
+        shell: bash
         run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
           xcaddy version
 
       - name: Build
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -87,7 +92,15 @@ jobs:
         run: |
           mkdir -p build
           VER="${{ github.event.inputs.caddy_version }}"
-          if [ -z "$VER" ] || [ "$VER" = "latest" ]; then
+          if [ -z "$VER" ]; then
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              VER="${GITHUB_REF#refs/tags/}"
+            else
+              VER="v2.10.0"
+            fi
+          fi
+          if [ "$VER" = "latest" ]; then
+            echo "::warning::latest may pull Caddy requiring Go 1.25+; prefer v2.10.0"
             xcaddy build --with github.com/caddy-dns/alidns \
               --output "build/caddy-${{ matrix.name }}${{ matrix.ext }}"
           else

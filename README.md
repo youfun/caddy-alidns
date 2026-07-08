@@ -3,7 +3,7 @@
 带 **阿里云 DNS（alidns）** 插件的 Caddy，用于 **DNS-01** 自动申请 / 续期 HTTPS 证书（支持通配符）。
 
 - 预编译包：[GitHub Releases](https://github.com/youfun/caddy-alidns/releases)
-- 运行方式：**原生二进制 + systemd**（无需 Docker）
+- 运行方式：**原生二进制 + systemd**（无需 Docker；若用 Docker 可选用 [Xm798/docker-caddy](https://github.com/Xm798/docker-caddy) 等已带 alidns 的镜像，Caddyfile 配置方式相同）
 
 ---
 

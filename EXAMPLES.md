@@ -2,6 +2,8 @@
 
 安装与运维：[docs/使用说明.md](./docs/使用说明.md)（编译发布见 [docs/编译与发布说明.md](./docs/编译与发布说明.md)）。
 
+**密钥**：示例中的 AccessKey 请改为 `{env.ALIYUN_ACCESS_KEY_ID}` / `{env.ALIYUN_ACCESS_KEY_SECRET}`，勿在配置文件中写明文。
+
 ## 全局 ACME DNS（推荐）
 
 ```caddyfile

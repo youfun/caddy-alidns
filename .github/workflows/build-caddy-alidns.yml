@@ -1,0 +1,187 @@
+name: Build Caddy with AliDNS Plugin
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      caddy_version:
+        description: "Caddy version (e.g. v2.10.0 or latest)"
+        required: false
+        default: "latest"
+        type: string
+      create_release:
+        description: "Create a GitHub release for this build"
+        required: false
+        default: false
+        type: boolean
+      manual_tag:
+        description: "Tag name for manual release (default: auto)"
+        required: false
+        default: "latest"
+        type: string
+  schedule:
+    - cron: "0 2 * * 0"
+
+env:
+  GOTOOLCHAIN: local
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build caddy-alidns
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            name: linux-amd64
+          - goos: linux
+            goarch: arm64
+            name: linux-arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            name: linux-armv7
+          - goos: linux
+            goarch: arm
+            goarm: 6
+            name: linux-armv6
+          - goos: windows
+            goarch: amd64
+            name: windows-amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            name: windows-arm64
+            ext: .exe
+          - goos: darwin
+            goarch: amd64
+            name: macos-amd64
+          - goos: darwin
+            goarch: arm64
+            name: macos-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "~1.24"
+          check-latest: true
+
+      - name: Install xcaddy
+        run: |
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          xcaddy version
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p build
+          VER="${{ github.event.inputs.caddy_version }}"
+          if [ -z "$VER" ] || [ "$VER" = "latest" ]; then
+            xcaddy build --with github.com/caddy-dns/alidns \
+              --output "build/caddy-${{ matrix.name }}${{ matrix.ext }}"
+          else
+            xcaddy build "$VER" --with github.com/caddy-dns/alidns \
+              --output "build/caddy-${{ matrix.name }}${{ matrix.ext }}"
+          fi
+          chmod +x "build/caddy-${{ matrix.name }}${{ matrix.ext }}" 2>/dev/null || true
+          ls -la build/
+
+      - name: Tarball (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          cd build
+          tar -czf "caddy-alidns-${{ matrix.name }}.tar.gz" "caddy-${{ matrix.name }}"
+          sha256sum "caddy-alidns-${{ matrix.name }}.tar.gz" > "caddy-alidns-${{ matrix.name }}.tar.gz.sha256"
+
+      - name: Zip (Windows)
+        if: matrix.goos == 'windows'
+        run: |
+          cd build
+          zip "caddy-alidns-${{ matrix.name }}.zip" "caddy-${{ matrix.name }}${{ matrix.ext }}"
+          sha256sum "caddy-alidns-${{ matrix.name }}.zip" > "caddy-alidns-${{ matrix.name }}.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caddy-alidns-${{ matrix.name }}
+          path: build/*
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.ref, 'refs/tags/') ||
+      github.event.schedule != '' ||
+      github.event.inputs.create_release == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            TAG="weekly-$(date +%Y%m%d-%H%M)"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.inputs.create_release }}" = "true" ]; then
+            USER_TAG="${{ github.event.inputs.manual_tag }}"
+            if [ -z "$USER_TAG" ] || [ "$USER_TAG" = "latest" ]; then
+              TAG="manual-$(date +%Y%m%d-%H%M%S)-${{ github.run_number }}"
+            else
+              TAG="${USER_TAG}-${{ github.run_number }}"
+            fi
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ steps.tag.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Caddy with AliDNS plugin
+
+            - Build: ${{ steps.tag.outputs.build_date }}
+            - Commit: ${{ github.sha }}
+
+            ### Usage
+
+            Set `ALIYUN_ACCESS_KEY_ID` and `ALIYUN_ACCESS_KEY_SECRET`, then use `acme_dns alidns { ... }` in your Caddyfile.
+            See [EXAMPLES.md](https://github.com/${{ github.repository }}/blob/main/EXAMPLES.md).
+
+            ### Verify
+
+            ```bash
+            sha256sum -c caddy-alidns-*.sha256
+            ```
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
